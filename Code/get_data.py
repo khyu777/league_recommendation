@@ -4,24 +4,65 @@ import numpy as np
 import datetime as dt
 import pytz
 import time
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+api_key = os.environ.get("RIOT_API_KEY")
+total_time = dt.timedelta(0)
+total_calls = 0
 
 # Get all matches function
 def get_all_matches(region, id):
-    global count
-    match = watcher.match.matchlist_by_account(region, id, queue = 420)
+    now = dt.datetime.now()
+    calls = 0
+    global count, total_time, total_calls
+    try:
+        print(count, id)
+        match = watcher.match.matchlist_by_account(region, id, queue = 420)
+        calls += 1
+    except ApiError as err:
+        print(err.response.status_code)
+        if err.response.status_code == 429:
+            print('We should retry in {} seconds.'.format(err.headers['Retry-After']))
+            print('this retry-after is handled by default by the RiotWatcher library')
+            print('future requests wait until the retry-after time passes')
+        elif err.response.status_code == 404:
+            print('Summoner with that ridiculous name not found.')
+        elif err.response_status_code == 504:
+            time.sleep(10)
+        else:
+            raise
     beginIndex = 100
     endIndex = 200
-    while endIndex <= 500:
-        print(count, id, beginIndex)
+    time.sleep(10/12)
+    while endIndex <= 1000:
+        print(count, id, endIndex)
         try:
             match_addl = watcher.match.matchlist_by_account(region, id, queue = 420, begin_index = beginIndex)
             match['matches'] = match['matches'] + match_addl['matches']
             beginIndex += 100
             endIndex += 100
-            time.sleep(1)
-        except:
-            return False
+            time.sleep(10/12)
+            calls += 1
+        except ApiError as err:
+            print(err.response.status_code)
+            if err.response.status_code == 429:
+                print('We should retry in {} seconds.'.format(err.headers['Retry-After']))
+                print('this retry-after is handled by default by the RiotWatcher library')
+                print('future requests wait until the retry-after time passes')
+            elif err.response.status_code == 404:
+                print('Summoner with that ridiculous name not found.')
+            else:
+                raise
     count += 1
+    duration = dt.datetime.now() - now
+    total_calls += calls
+    total_time += duration
+    print(duration, "Calls: {}".format(calls))
+    print("Total time: {}".format(total_time), "Total calls: {}".format(total_calls))
+    if total_calls % 100 == 0:
+        time.sleep(60)
     return(match)
 
 # accountId print function
@@ -30,34 +71,22 @@ def acct_id_print(my_region, id):
     print(count)
     acct_id = watcher.summoner.by_id(my_region, id)['accountId']
     count += 1
-    time.sleep(1)
+    time.sleep(10/12)
     return(acct_id)
 
 #global vars
-api_key = 'RGAPI-62ceaab2-d743-4840-9235-be861c88513c'
 watcher = LolWatcher(api_key)
 my_region = 'na1'
 
-print('Pulling Master players list...')
-master = watcher.league.masters_by_queue(my_region, 'RANKED_SOLO_5x5')
-print('Finished pulling Master players')
-master_df = pd.DataFrame(master)
-master_df = master_df.head(100)
-
-master_df = master_df.join(pd.json_normalize(master_df.entries))
-master_df.drop(columns = ['entries'], inplace = True)
-
-print('Total # of players: {}'.format(master_df.shape[0]))
-
-print('Getting accountId...')
-count = 1
-master_df.loc[:,'acct_id'] = [acct_id_print(my_region, x) for x in master_df.summonerId]
-print('Finished getting accountId')
+master_df = pd.read_csv('Raw Data/queue_list.csv')
+master_df.reset_index(inplace=True)
 
 print('Getting matches...')
 count = 1
 master_df.loc[:, 'match'] = [get_all_matches(my_region, x) for x in master_df.acct_id]
 master_df = master_df.join(pd.json_normalize(master_df.match))
+print('Finished getting matches')
+print(master_df.dtypes, master_df)
 
 lens = [len(item) for item in master_df['matches']]
 master_df = pd.DataFrame(
@@ -79,7 +108,7 @@ champion_key['key'] = pd.to_numeric(champion_key['key'])
 master_df = pd.merge(master_df, champion_key, how = 'left', left_on = 'champion', right_on = 'key')
 print('Added champion names')
 
-master_df.to_csv('Raw Data/master_solo_queue.csv', index = False)
+master_df.to_csv('Raw Data/master_solo_queue_all.csv', index = False)
 
 # Get Match Information
 print('Getting match information')
@@ -110,5 +139,5 @@ print('Finished getting participants')
 
 pt_match_all = pts.merge(pt_ids, on = ['participantId', 'gameId'])
 
-match_info_teams.to_csv('Raw Data/match_team_info.csv', index = False)
-pt_match_all.to_csv('Raw Data/match_pt_info.csv', index = False)
+match_info_teams.to_csv('Raw Data/match_team_info_all.csv', index = False)
+pt_match_all.to_csv('Raw Data/match_pt_info_all.csv', index = False)
